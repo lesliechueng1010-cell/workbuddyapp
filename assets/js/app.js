@@ -1,5 +1,5 @@
 /* =========================================================
- * 云峰鲜果 · 顾客端 App
+ * 云峰水果大卖场 · 顾客端 App
  * ========================================================= */
 (function () {
   const S = YF.store;
@@ -92,11 +92,68 @@
   function head() {
     const m = YF.MODES[UI.mode];
     const u = st().user;
+    const sp = S.getShop();
     return '<div class="app-head">' +
-      '<div class="title">🍊 云峰鲜果 <span style="font-size:11px;font-weight:400;opacity:.85">10 年老品牌 · 全球鲜果直采</span></div>' +
-      '<div class="loc-bar"><span>📍 配送范围：南京市内（2 小时达）</span><span>' + esc(u.name) + ' ▾</span></div>' +
+      '<div class="title">' + sp.logo + ' 云峰水果大卖场 <span style="font-size:11px;font-weight:400;opacity:.85">10 年老品牌 · 全球鲜果直采</span></div>' +
+      '<div class="loc-bar"><span>📍 ' + esc(sp.delivery) + '</span><span>' + esc(u.name) + ' ▾</span></div>' +
       '<div class="search-box"><span>🔍</span><span>搜索「' + m.short + '」商品，如 车厘子 / 果篮</span></div>' +
       '</div>';
+  }
+
+  /* ---------- 门店信息（读 store 里同一份数据，后台改了这里立刻变） ---------- */
+  function isOpen(hours) {
+    const m = /(\d{1,2}):(\d{2})\s*[-~至]\s*(\d{1,2}):(\d{2})/.exec(hours || '');
+    if (!m) return null;
+    const d = new Date(), cur = d.getHours() * 60 + d.getMinutes();
+    const a = (+m[1]) * 60 + (+m[2]), b = (+m[3]) * 60 + (+m[4]);
+    return cur >= a && cur <= b;
+  }
+  function shopCard() {
+    const sp = S.getShop();
+    const open = isOpen(sp.hours);
+    return '<div class="card pad" style="margin:12px 12px 0">' +
+      '<div class="row" style="padding:0" data-act="shop-detail">' +
+      '<span style="font-size:30px">' + sp.logo + '</span>' +
+      '<div class="grow"><div class="rt">' + esc(sp.name) +
+      (open === null ? '' : ' <span class="chip ' + (open ? '' : 'gray') + '">' + (open ? '营业中' : '已打烊') + '</span>') + '</div>' +
+      '<div class="rs">🕘 ' + esc(sp.hours) + ' · ☎️ ' + esc(sp.phone) + '</div>' +
+      '<div class="rs" style="margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📢 ' + esc(sp.notice) + '</div>' +
+      '</div><span class="arrow">›</span></div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button class="btn sm ghost" data-act="call-shop" style="flex:1">☎️ 拨打门店电话</button>' +
+      '<button class="btn sm ghost" data-act="shop-detail" style="flex:1">🏪 门店详情</button>' +
+      '</div></div>';
+  }
+  function infoRow(icon, label, val, act) {
+    return '<div class="row"' + (act ? ' data-act="' + act + '"' : '') + '>' +
+      '<span style="font-size:18px">' + icon + '</span>' +
+      '<div class="grow"><div class="rt">' + label + '</div><div class="rs">' + esc(val) + '</div></div>' +
+      (act ? '<span class="chip">拨打</span>' : '') + '</div>';
+  }
+  function openShop() {
+    const sp = S.getShop();
+    const open = isOpen(sp.hours);
+    const body =
+      '<div style="text-align:center;padding:4px 0 14px">' +
+      '<div style="font-size:54px">' + sp.logo + '</div>' +
+      '<div style="font-size:17px;font-weight:800;margin-top:6px">' + esc(sp.name) + '</div>' +
+      '<div style="font-size:11px;color:#8A8F98;margin-top:4px">' + esc(sp.slogan) + '</div>' +
+      (open === null ? '' : '<div style="margin-top:8px"><span class="chip ' + (open ? '' : 'gray') + '">' +
+        (open ? '● 营业中' : '○ 已打烊') + '</span></div>') +
+      '</div>' +
+      '<div class="card">' +
+      infoRow('📍', '门店地址', sp.address, null) +
+      infoRow('☎️', '联系电话', sp.phone, 'call-shop') +
+      infoRow('🕘', '营业时间', sp.hours, null) +
+      infoRow('🚚', '配送范围', sp.delivery, null) +
+      '</div>' +
+      '<div class="section-head" style="margin-top:14px"><h3>门店公告</h3></div>' +
+      '<div class="card pad" style="font-size:12px;line-height:1.8">' + esc(sp.notice) + '</div>' +
+      '<div class="ok" style="margin-top:12px">🛡️ 坏果包赔：签收 24 小时内拍照即可赔付，门店电话 ' + esc(sp.phone) + ' 全天受理</div>';
+    const foot = '<div style="display:flex;gap:10px">' +
+      '<button class="btn ghost" style="flex:1" data-act="call-shop">☎️ 拨打门店电话</button>' +
+      '<button class="btn" style="flex:1" data-act="close">知道了</button></div>';
+    sheet('门店详情', body, foot);
   }
 
   function modeSwitch() {
@@ -130,6 +187,85 @@
     else if (UI.sort === 'price') list.sort((a, b) => YF.priceOf(a, UI.mode, 1) - YF.priceOf(b, UI.mode, 1));
     else list.sort((a, b) => b.stock - a.stock);
     return list;
+  }
+
+  /* ---------- 拼团 ---------- */
+  function fmtLeft(ms) {
+    if (!(ms > 0)) return '已结束';
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    const p = n => (n < 10 ? '0' + n : '' + n);
+    return (h > 0 ? h + ':' : '') + p(m) + ':' + p(ss);
+  }
+  function gbCard(gb) {
+    const p = gb.members.length;
+    return '<div class="row">' +
+      '<span style="font-size:30px">' + gb.emoji + '</span>' +
+      '<div class="grow">' +
+      '<div class="rt">' + esc(gb.name) + ' <span class="chip purple">' + gb.need + ' 人团</span></div>' +
+      '<div class="rs"><span style="color:#F87171;font-weight:700">¥' + gb.price.toFixed(2) + '</span> ' +
+      '<span style="text-decoration:line-through">¥' + gb.retail.toFixed(2) + '</span> · ' + esc(gb.spec) + '</div>' +
+      '<div class="gp-bar"><i style="width:' + Math.min(100, p / gb.need * 100).toFixed(0) + '%"></i></div>' +
+      '<div class="rs">已参团 ' + p + '/' + gb.need + ' 人 · 剩 <span class="countdown" data-cd="1" data-end="' + gb.endAt + '">' +
+      fmtLeft(gb.endAt - Date.now()) + '</span></div>' +
+      '</div>' +
+      '<button class="btn sm" data-act="gb-open" data-id="' + gb.id + '">去参团</button></div>';
+  }
+  function gbSection() {
+    const list = S.gbList().filter(g => g.status === 'ing').slice(0, 3);
+    if (!list.length) return '';
+    return '<div class="section"><div class="section-head"><h3>🔥 限时拼团</h3>' +
+      '<span class="more">成团立享特价 · 不成团自动全额退</span></div>' +
+      '<div class="card">' + list.map(gbCard).join('') + '</div></div>';
+  }
+  function openGroupBuy(gid) {
+    const gb = S.gbOf(gid);
+    if (!gb) return;
+    const joined = gb.members.length;
+    const ing = gb.status === 'ing';
+    let seats = '';
+    if (ing) {
+      for (let i = 0; i < Math.max(0, gb.need - joined); i++) {
+        seats += '<div style="text-align:center;width:52px"><div style="font-size:26px;opacity:.35">➕</div>' +
+          '<div style="font-size:10px;color:#8A8F98;margin-top:2px">虚位以待</div></div>';
+      }
+    }
+    const body =
+      '<div class="pd-hero" style="height:130px;font-size:62px">' + gb.emoji + '</div>' +
+      '<div style="padding:12px 0 0">' +
+      '<div style="display:flex;align-items:flex-end;gap:8px">' +
+      '<div class="pd-price"><small>¥</small>' + gb.price.toFixed(2) + '</div>' +
+      '<div style="font-size:12px;color:#8A8F98;text-decoration:line-through">¥' + gb.retail.toFixed(2) + '</div>' +
+      '<span class="chip purple">' + gb.need + ' 人成团价</span></div>' +
+      '<div style="font-size:16px;font-weight:700;margin-top:6px">' + esc(gb.name) + '</div>' +
+      '<div style="font-size:12px;color:#8A8F98;margin-top:4px">规格 ' + esc(gb.spec) + ' · 比零售价省 ' + YF.money(gb.retail - gb.price) + '</div>' +
+
+      '<div class="card pad" style="margin-top:12px">' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px">' +
+      '<span>拼团进度</span><span class="countdown">' + joined + '/' + gb.need + ' 人</span></div>' +
+      '<div class="gp-bar"><i style="width:' + Math.min(100, joined / gb.need * 100).toFixed(0) + '%"></i></div>' +
+      '<div style="font-size:11px;color:#8A8F98;margin-top:6px">' +
+      (ing ? '还差 ' + Math.max(0, gb.need - joined) + ' 人成团 · 距结束 <span data-cd="1" data-end="' + gb.endAt + '">' +
+        fmtLeft(gb.endAt - Date.now()) + '</span>' :
+        (gb.status === 'success' ? '🎉 已成团，订单进入待自提流程' : '⏱ 该团已结束，未成团订单已全额退款')) + '</div>' +
+      '</div>' +
+
+      '<div class="section-head" style="margin-top:14px"><h3>已参团成员（' + joined + '）</h3></div>' +
+      '<div class="card pad"><div style="display:flex;gap:10px;flex-wrap:wrap">' +
+      gb.members.map(m => '<div style="text-align:center;width:52px"><div style="font-size:26px">' + m.avatar + '</div>' +
+        '<div style="font-size:10px;color:#8A8F98;margin-top:2px">' + esc(m.name) + (m.self ? '<br>本人' : '') + '</div></div>').join('') +
+      seats + '</div></div>' +
+      '<div class="ok" style="margin-top:12px">🤝 成团后订单自动进入待自提流程；到期未成团，系统将全额退回会员卡余额。</div>' +
+      '</div>';
+
+    const foot = ing
+      ? '<div style="display:flex;align-items:center;gap:10px">' +
+        '<div style="flex:1"><div style="font-size:11px;color:#8A8F98">拼团价</div>' +
+        '<div style="font-size:18px;font-weight:800;color:#E54545">' + YF.money(gb.price) + '</div></div>' +
+        '<button class="btn" style="width:124px" data-act="gb-join" data-id="' + gb.id + '">立即参团</button>' +
+        '<button class="btn ghost" style="width:112px" data-act="gb-sim" data-id="' + gb.id + '">模拟参团</button></div>'
+      : '<button class="btn gray" data-act="close">该团已结束</button>';
+    sheet('拼团详情', body, foot);
   }
 
   /* ---------- 首页 ---------- */
@@ -170,8 +306,8 @@
         ? '<div class="banner green"><div class="bn-emoji">👥</div><h2>社区团购 · 比零售省 15%</h2><p>20 人成团，次日自提点取货，不成团自动全额退</p></div>'
         : '<div class="banner blue"><div class="bn-emoji">🏢</div><h2>企业采购 · 阶梯批发价</h2><p>专属客户经理 · 对公转账 · 30 天账期 · 增值税专票</p></div>';
 
-    return head() + modeSwitch() +
-      '<div style="padding:0 12px">' + banner + '</div>' + extra +
+    return head() + shopCard() + modeSwitch() +
+      '<div style="padding:0 12px">' + banner + '</div>' + gbSection() + extra +
       '<div style="padding:0 12px">' + catBar() + '</div>' +
       '<div class="section"><div class="section-head"><h3>' + YF.CATEGORIES.find(c => c.id === UI.cat).name +
       ' <span class="chip orange" style="margin-left:4px">' + m.unitLabel + '</span></h3>' +
@@ -197,9 +333,10 @@
   }
 
   /* ---------- 订单 ---------- */
-  const FILTERS = { all: '全部', unpaid: '待付款', ing: '进行中', done: '已完成', after: '售后' };
+  const FILTERS = { all: '全部', gb: '🔥 拼团', unpaid: '待付款', ing: '进行中', done: '已完成', after: '售后' };
   function matchFilter(o) {
     if (UI.ordFilter === 'all') return true;
+    if (UI.ordFilter === 'gb') return !!o.groupBuyId;
     if (UI.ordFilter === 'unpaid') return o.status === 'unpaid' || o.status === 'auditing';
     if (UI.ordFilter === 'ing') return ['accepted', 'delivering', 'grouping', 'pickup', 'delivered'].includes(o.status);
     if (UI.ordFilter === 'done') return o.status === 'done';
@@ -212,6 +349,7 @@
     return '<div class="ord" data-act="ord-detail" data-id="' + o.id + '">' +
       '<div class="ord-head">' +
       '<div><span class="chip ' + (o.mode === 'bulk' ? 'blue' : o.mode === 'group' ? '' : 'orange') + '">' + m.icon + ' ' + m.short + '</span> ' +
+      (o.groupBuyId ? '<span class="chip purple">🔥 拼团单</span> ' : '') +
       '<span class="ord-no">' + esc(o.no) + '</span></div>' +
       '<div class="ord-st" style="color:' + s.color + '">' + s.label + '</div></div>' +
       '<div class="ord-items">' +
@@ -237,7 +375,10 @@
     } else if (o.status === 'auditing') {
       acts += '<button class="mini" data-act="cancel" data-id="' + o.id + '">撤回申请</button>';
     } else if (['accepted', 'delivering', 'grouping'].includes(o.status)) {
-      acts += '<button class="mini primary" data-act="advance" data-id="' + o.id + '">' +
+      if (o.groupBuyId && o.status === 'grouping') {
+        acts += '<button class="mini primary" data-act="gb-sim-order" data-id="' + o.id + '">👥 模拟好友参团</button>';
+      }
+      acts += '<button class="mini' + (o.groupBuyId && o.status === 'grouping' ? '' : ' primary') + '" data-act="advance" data-id="' + o.id + '">' +
         (o.status === 'grouping' ? '模拟成团' : '催一下 / 模拟下一步') + '</button>';
       if (o.status === 'accepted' || o.status === 'delivering') {
         acts += '<button class="mini danger" data-act="refund" data-id="' + o.id + '">申请售后</button>';
@@ -314,7 +455,8 @@
 
       '<div class="section"><button class="btn ghost" data-act="goto-admin">🛠️ 进入商家管理后台</button>' +
       '<div style="text-align:center;margin-top:10px"><button class="chip gray" data-act="reset">重置演示数据</button></div>' +
-      '<div style="text-align:center;font-size:10px;color:#A8ADB3;margin-top:14px">云峰水果大卖场 · 南京市建邺区 · 客服 400-025-8888</div></div>';
+      '<div style="text-align:center;font-size:10px;color:#A8ADB3;margin-top:14px">' +
+      esc(S.getShop().name) + ' · ' + esc(S.getShop().address) + ' · 客服 ' + esc(S.getShop().phone) + '</div></div>';
   }
   function rowItem(icon, title, sub, act) {
     return '<div class="row" data-act="' + act + '"><span style="font-size:18px">' + icon + '</span>' +
@@ -546,13 +688,28 @@
     if (!o) return;
     const s = YF.STATUS[o.status];
     const m = YF.MODES[o.mode];
+    const gb = o.groupBuyId ? S.gbOf(o.groupBuyId) : null;
     const body =
       '<div style="display:flex;align-items:center;gap:8px;padding:10px;background:' + (o.status === 'refunding' || o.status === 'refunded' ? '#FDECEC' : '#E8F6EE') + ';border-radius:10px">' +
       '<span style="font-size:24px">' + m.icon + '</span>' +
       '<div style="flex:1"><div style="font-size:15px;font-weight:800;color:' + s.color + '">' + s.label + '</div>' +
       '<div style="font-size:11px;color:#8A8F98">' + esc(o.no) + ' · ' + YF.fmtTime(o.createdAt) + '</div></div></div>' +
 
-      (o.group ? '<div class="card pad" style="margin-top:12px">' +
+      (gb ? '<div class="card pad" style="margin-top:12px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px"><span>🔥 拼团进度（' + gb.need + ' 人团）</span>' +
+        '<span class="countdown">' + gb.members.length + '/' + gb.need + ' 人</span></div>' +
+        '<div class="gp-bar"><i style="width:' + Math.min(100, gb.members.length / gb.need * 100).toFixed(0) + '%"></i></div>' +
+        '<div style="font-size:11px;color:#8A8F98;margin-top:6px">' +
+        (gb.status === 'ing'
+          ? '还差 ' + Math.max(0, gb.need - gb.members.length) + ' 人成团 · 剩 <span data-cd="1" data-end="' + gb.endAt + '">' + fmtLeft(gb.endAt - Date.now()) + '</span>'
+          : gb.status === 'success' ? '🎉 拼团成功，请到自提点取货' : '⏱ 拼团未成团，已全额退款到会员卡余额') +
+        '</div>' +
+        '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+        gb.members.map(m2 => '<span class="chip ' + (m2.self ? '' : 'gray') + '">' + m2.avatar + ' ' + esc(m2.name) + '</span>').join('') +
+        '</div>' +
+        '<button class="btn sm ghost" style="margin-top:10px" data-act="gb-open" data-id="' + gb.id + '">查看拼团详情</button>' +
+        '</div>' : '') +
+      ((!gb && o.group) ? '<div class="card pad" style="margin-top:12px">' +
         '<div style="display:flex;justify-content:space-between;font-size:12px"><span>拼团进度</span>' +
         '<span class="countdown">' + o.group.joinedPeople + '/' + o.group.needPeople + ' 人</span></div>' +
         '<div class="gp-bar"><i style="width:' + (o.group.joinedPeople / o.group.needPeople * 100).toFixed(0) + '%"></i></div>' +
@@ -600,7 +757,9 @@
     let foot = '';
     if (o.status === 'unpaid') foot = '<button class="btn" data-act="pay-now" data-id="' + o.id + '">立即付款 ' + YF.money(o.total) + '</button>';
     else if (['accepted', 'delivering', 'grouping'].includes(o.status)) {
-      foot = '<div style="display:flex;gap:10px"><button class="btn ghost" style="flex:1" data-act="advance" data-id="' + o.id + '">推进状态</button>' +
+      foot = '<div style="display:flex;gap:10px">' +
+        (gb && gb.status === 'ing' ? '<button class="btn ghost" style="flex:1" data-act="gb-sim-order" data-id="' + o.id + '">👥 模拟好友参团</button>' : '') +
+        '<button class="btn ' + (gb ? 'ghost' : 'ghost') + '" style="flex:1" data-act="advance" data-id="' + o.id + '">推进状态</button>' +
         '<button class="btn gray" style="flex:1" data-act="refund" data-id="' + o.id + '">申请售后</button></div>';
     } else if (o.status === 'delivered' || o.status === 'pickup') {
       foot = '<button class="btn" data-act="advance" data-id="' + o.id + '">确认完成</button>';
@@ -795,10 +954,15 @@
         const r = S.payOrder(id, el.getAttribute('data-method'));
         if (!r.ok) { toast(r.msg); return; }
         closeSheet();
-        confirmBox({ text: '支付成功', emoji: '✅' },
+        const formed = !!r.order._formed;
+        const gbNow = r.order.groupBuyId ? S.gbOf(r.order.groupBuyId) : null;
+        confirmBox({ text: formed ? '参团成功 · 已拼成' : '支付成功', emoji: formed ? '🎉' : '✅' },
           '已使用「' + S.payName(r.order.payMethod) + '」支付 ' + YF.money(r.order.total) +
-          '<br>订单号 ' + r.order.no, '查看订单', () => {
-            UI.tab = 'orders'; UI.ordFilter = 'ing'; render();
+          '<br>订单号 ' + r.order.no +
+          (gbNow ? '<br>拼团进度 ' + gbNow.members.length + '/' + gbNow.need + ' 人' +
+            (formed ? '<br>已成团，请到自提点取货' : '<br>还差 ' + (gbNow.need - gbNow.members.length) + ' 人，不成团自动全额退') : ''),
+          '查看订单', () => {
+            UI.tab = 'orders'; UI.ordFilter = r.order.groupBuyId ? 'gb' : 'ing'; render();
           });
         render();
         break;
@@ -839,6 +1003,47 @@
         break;
       }
       case 'ord-detail': openOrderDetail(id); break;
+      case 'shop-detail': openShop(); break;
+      case 'call-shop':
+        location.href = 'tel:' + String(S.getShop().phone || '').replace(/[^\d+]/g, '');
+        break;
+
+      case 'gb-open': openGroupBuy(id); break;
+      case 'gb-join': {
+        const r = S.joinGroupBuy(id);
+        if (!r.ok) { toast(r.msg); break; }
+        closeSheet();
+        render();
+        openPay(r.order.id);
+        break;
+      }
+      case 'gb-sim': {
+        const r2 = S.gbSimulate(id, 1);
+        if (!r2.ok) { toast(r2.msg); break; }
+        if (r2.formed) {
+          closeSheet();
+          confirmBox({ text: '拼团成功', emoji: '🎉' },
+            '已有 ' + r2.gb.need + ' 人参团，成团达成<br>订单已进入待自提流程', '查看订单', () => {
+              UI.tab = 'orders'; UI.ordFilter = 'gb'; render();
+            });
+        } else {
+          toast('已模拟 1 位用户参团：' + r2.gb.members.length + '/' + r2.gb.need + ' 人');
+          openGroupBuy(id);
+        }
+        render();
+        break;
+      }
+      case 'gb-sim-order': {
+        const o0 = st().orders.find(x => x.id === id);
+        if (!o0 || !o0.groupBuyId) { toast('该订单不是拼团订单'); break; }
+        const r3 = S.gbSimulate(o0.groupBuyId, 1);
+        if (!r3.ok) { toast(r3.msg); break; }
+        closeSheet();
+        toast(r3.formed ? '拼团成功！订单已进入待自提' :
+          '已模拟 1 位好友参团：' + r3.gb.members.length + '/' + r3.gb.need + ' 人');
+        render();
+        break;
+      }
 
       case 'coupons': openMyCoupons(); break;
       case 'addr': openAddr(); break;
@@ -847,12 +1052,14 @@
       case 'points':
         sheet('积分商城', '<div class="empty"><div class="ee">🎁</div><p>积分商城正在装修中<br>当前可用 ' + st().user.points + ' 积分，结算时可抵扣 ' + YF.money(Math.floor(st().user.points / 100)) + '</p></div>', '');
         break;
-      case 'cs':
+      case 'cs': {
+        const sp0 = S.getShop();
         sheet('联系客服', '<div class="card pad" style="line-height:2;font-size:13px">' +
-          '☎️ 客服热线：400-025-8888<br>🕘 服务时间：09:00 - 21:00<br>' +
-          '💬 微信客服：yunfengfruit<br>📍 门店地址：南京市建邺区江东中路万达广场 B1<br>' +
+          '☎️ 客服热线：' + esc(sp0.phone) + '<br>🕘 服务时间：' + esc(sp0.hours) + '<br>' +
+          '💬 微信客服：yunfengfruit<br>📍 门店地址：' + esc(sp0.address) + '<br>' +
           '🛡️ 坏果包赔：签收 24 小时内拍照即可赔付</div>', '');
         break;
+      }
       case 'invoice':
         sheet('发票管理', '<div class="card">' +
           st().orders.filter(o => o.invoice).map(o =>
@@ -871,14 +1078,37 @@
     }
   });
 
-  /* ---------- 时钟 ---------- */
+  /* ---------- 时钟 + 拼团倒计时 + 超时自动退款 ---------- */
+  let cdCount = 0;
   function tick() {
     const d = new Date();
     const p = n => (n < 10 ? '0' + n : '' + n);
     $('clock').textContent = d.getHours() + ':' + p(d.getMinutes());
+
+    // 页面上的拼团倒计时（只改文本，不重绘，避免影响滚动与输入）
+    document.querySelectorAll('[data-cd]').forEach(el => {
+      const end = +el.getAttribute('data-end');
+      if (isFinite(end)) el.textContent = fmtLeft(end - Date.now());
+    });
+
+    // 每 10 秒扫描一次到期未成团的拼团，自动全额退款到会员卡
+    cdCount++;
+    if (cdCount % 10 === 0) {
+      const closed = S.gbTick();
+      if (closed.length) {
+        const amt = closed.reduce((s, c) => s + c.amount, 0);
+        toast(closed.length + ' 个拼团超时未成团，已自动退款 ' + YF.money(amt) + ' 到会员卡');
+        render();
+      }
+    }
   }
-  tick(); setInterval(tick, 30000);
 
   S.load();
+  const closed0 = S.gbTick();
   render();
+  setInterval(tick, 1000);
+  if (closed0.length) {
+    const amt0 = closed0.reduce((s, c) => s + c.amount, 0);
+    setTimeout(() => toast(closed0.length + ' 个拼团超时未成团，已自动退款 ' + YF.money(amt0) + ' 到会员卡'), 400);
+  }
 })();

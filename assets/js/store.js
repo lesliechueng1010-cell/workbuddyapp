@@ -1,5 +1,5 @@
 /* =========================================================
- * 云峰鲜果 · 状态与业务逻辑层
+ * 云峰水果大卖场 · 状态与业务逻辑层
  * 全部数据落地 localStorage，刷新不丢
  * ========================================================= */
 (function () {
@@ -60,7 +60,7 @@
       id: '', no: '', items: [], subtotal: 0, levelCut: 0, couponCut: 0, pointsCut: 0,
       deliveryFee: 0, total: 0, payMethod: 'balance', status: 'done', createdAt: now,
       timeline: [], address: null, pickup: null, company: null, invoice: null,
-      refund: null, group: null, remark: ''
+      refund: null, group: null, groupBuyId: null, remark: ''
     }, o);
 
     const P = id => YF.PRODUCTS.find(x => x.id === id);
@@ -179,8 +179,49 @@
     ];
   }
 
+  /* ---------- 拼团活动种子数据 ---------- */
+  function seedGroupBuys() {
+    const H = 3600 * 1000;
+    const now = Date.now();
+    const P = id => YF.PRODUCTS.find(x => x.id === id);
+    const member = (u, ts) => ({ name: u.name, avatar: u.avatar, self: false, at: ts, orderId: null });
+    const mk = (o) => {
+      const p = P(o.pid);
+      return Object.assign({
+        id: '', pid: '', name: p.name, emoji: p.emoji, spec: p.spec,
+        price: p.group, retail: p.retail, need: 3, hours: 12,
+        startAt: now - 2 * H, endAt: now + 12 * H,
+        members: [], status: 'ing', formedAt: null, closedAt: null, closeReason: ''
+      }, o);
+    };
+    return [
+      mk({
+        id: 'GB001', pid: 'P01', price: 29.9, need: 5, hours: 12,
+        endAt: now + 9 * H,
+        members: [member(YF.MOCK_USERS[0], now - 1.6 * H), member(YF.MOCK_USERS[1], now - 1.1 * H), member(YF.MOCK_USERS[2], now - 0.4 * H)]
+      }),
+      mk({
+        id: 'GB002', pid: 'P10', price: 99.0, need: 3, hours: 8,
+        endAt: now + 5 * H,
+        members: [member(YF.MOCK_USERS[3], now - 0.9 * H), member(YF.MOCK_USERS[4], now - 0.3 * H)]
+      }),
+      mk({
+        id: 'GB003', pid: 'P02', price: 24.8, need: 8, hours: 24,
+        endAt: now + 21 * H,
+        members: [member(YF.MOCK_USERS[5], now - 2 * H), member(YF.MOCK_USERS[6], now - 1.5 * H),
+                  member(YF.MOCK_USERS[7], now - 0.8 * H), member(YF.MOCK_USERS[8], now - 0.2 * H)]
+      }),
+      mk({
+        id: 'GB004', pid: 'P14', price: 25.0, need: 5, hours: 12,
+        startAt: now - 30 * H, endAt: now - 4 * H, status: 'success', formedAt: now - 6 * H,
+        members: YF.MOCK_USERS.slice(0, 5).map((u, i) => member(u, now - (8 - i) * H))
+      })
+    ];
+  }
+
   function initialState() {
     return {
+      shop: JSON.parse(JSON.stringify(YF.SHOP_INFO)),
       user: JSON.parse(JSON.stringify(YF.DEFAULT_USER)),
       products: JSON.parse(JSON.stringify(YF.PRODUCTS)).map(p => {
         // 进价（成本）：默认按最低批发价的 78% 估算，入库时可被实际采购价覆盖
@@ -200,6 +241,8 @@
       ],
       intakes: [],
       intakeSeq: 1,
+      groupBuys: seedGroupBuys(),
+      gbSeq: 5,
       seq: 10009
     };
   }
@@ -219,6 +262,11 @@
           if (p.cost == null) p.cost = +(p.bulk[0].price * 0.78).toFixed(2);
         });
         state.intakes = state.intakes || [];
+        // 补齐门店信息（兼容旧版本数据）
+        state.shop = Object.assign(JSON.parse(JSON.stringify(YF.SHOP_INFO)), state.shop || {});
+        // 补齐拼团活动
+        if (!Array.isArray(state.groupBuys)) { state.groupBuys = seedGroupBuys(); state.gbSeq = 5; }
+        if (state.gbSeq == null) state.gbSeq = state.groupBuys.length + 1;
         return state;
       }
     } catch (e) { console.warn('读取本地数据失败，使用初始数据', e); }
@@ -357,6 +405,7 @@
       invoice: extra.invoice || null,
       refund: null,
       group: mode === 'group' ? { leaderId: extra.leaderId || st2.groupMode.leaderId, needPeople: 20, joinedPeople: Math.floor(Math.random() * 12) + 6, endTime: now + 20 * 3600e3 } : null,
+      groupBuyId: extra.groupBuyId || null,
       remark: extra.remark || ''
     };
 
@@ -402,6 +451,21 @@
     if (o.mode === 'group') o.timeline.push({ t: now, text: '已加入团购，等待成团' });
     else o.timeline.push({ t: now, text: '支付成功，等待商家接单' });
 
+    // 拼团订单：付款后自动入团，满员则成团并推进到待自提
+    if (o.groupBuyId) {
+      const r = gbJoin(o.groupBuyId, { name: st.user.name, avatar: st.user.avatar, self: true, orderId: o.id });
+      if (r.ok) {
+        const gb = r.gb;
+        o.timeline.push({ t: now, text: '已加入拼团（' + gb.members.length + '/' + gb.need + ' 人）' });
+        if (r.formed) o.timeline.push({ t: now, text: '拼团成功，等待到店自提' });
+        o.group = o.group || {};
+        o.group.joinedPeople = gb.members.length;
+        o.group.needPeople = gb.need;
+        o.group.endTime = gb.endAt;
+        o._formed = !!r.formed;
+      }
+    }
+
     // 积分扣除（下单时已抵扣）
     if (o.pointsCut > 0) {
       st.user.points -= o.pointsCut * 100;
@@ -445,6 +509,11 @@
     if (!o) return;
     o.status = 'canceled';
     o.timeline.push({ t: Date.now(), text: '订单已取消' });
+    // 退出拼团
+    if (o.groupBuyId) {
+      const gb = gbOf(o.groupBuyId);
+      if (gb) gb.members = gb.members.filter(m => m.orderId !== o.id);
+    }
     // 还库存
     o.items.forEach(i => {
       const p = st.products.find(x => x.id === i.id);
@@ -524,6 +593,213 @@
     p.stock = Math.max(0, p.stock + delta);
     st.stockLogs.unshift({ ts: Date.now(), pid, delta, type: delta > 0 ? '盘点入库' : '盘点出库', memo: memo || '手工盘点调整' });
     save();
+  }
+
+  /* ---------- 门店信息（两端共用） ---------- */
+  function getShop() { return get().shop; }
+  function updateShop(patch) {
+    const sp = get().shop;
+    Object.assign(sp, patch || {});
+    // 同步第一个自提点（即门店本身）的名称与地址
+    const p0 = YF.PICKUP_POINTS[0];
+    if (p0) {
+      if (patch && patch.name) p0.name = patch.name;
+      if (patch && patch.address) p0.addr = patch.address;
+    }
+    save();
+    return sp;
+  }
+
+  /* ---------- 拼团 ---------- */
+  function gbList() { return get().groupBuys; }
+  function gbOf(id) { return get().groupBuys.find(g => g.id === id); }
+  function gbByProduct(pid) { return get().groupBuys.find(g => g.pid === pid && g.status === 'ing'); }
+
+  /** 发起拼团活动 */
+  function gbCreate(opt) {
+    const st = get();
+    const p = st.products.find(x => x.id === opt.pid);
+    if (!p) return { ok: false, msg: '商品不存在' };
+    const need = Math.max(2, parseInt(opt.need, 10) || 3);
+    const hours = Math.max(1, parseFloat(opt.hours) || 12);
+    let price = parseFloat(opt.price);
+    if (!(price > 0)) price = +(p.group * 0.9).toFixed(2);
+    const now = Date.now();
+    const gb = {
+      id: 'GB' + String(st.gbSeq).padStart(3, '0'),
+      pid: p.id, name: p.name, emoji: p.emoji, spec: p.spec,
+      price: +price.toFixed(2), retail: p.retail, need, hours,
+      startAt: now, endAt: now + hours * 3600e3,
+      members: [], status: 'ing', formedAt: null, closedAt: null, closeReason: ''
+    };
+    st.gbSeq += 1;
+    st.groupBuys.unshift(gb);
+    save();
+    return { ok: true, gb };
+  }
+
+  /** 成团：把所有团员订单推进到待自提 */
+  function gbFormOrders(gb) {
+    const st = get();
+    const now = Date.now();
+    gb.members.forEach(m => {
+      if (!m.orderId) return;
+      const o = st.orders.find(x => x.id === m.orderId);
+      if (!o || o.status !== 'grouping') return;
+      o.status = 'pickup';
+      o.timeline.push({ t: now, text: '拼团成功（' + gb.members.length + '/' + gb.need + ' 人），商品已到达自提点，请凭取货码自提' });
+    });
+  }
+
+  /** 参团：who = {name, avatar, self, orderId} */
+  function gbJoin(id, who) {
+    const st = get();
+    const gb = gbOf(id);
+    if (!gb) return { ok: false, msg: '拼团不存在' };
+    if (gb.status !== 'ing') return { ok: false, msg: '该团已结束' };
+    if (who && who.self && gb.members.some(m => m.self)) return { ok: false, msg: '你已在该团内' };
+    gb.members.push(Object.assign({ self: false, at: Date.now(), orderId: null }, who || {}));
+    let formed = false;
+    if (gb.members.length >= gb.need) {
+      gb.status = 'success';
+      gb.formedAt = Date.now();
+      formed = true;
+      gbFormOrders(gb);
+    }
+    save();
+    return { ok: true, gb, formed };
+  }
+
+  /** 演示用：模拟 n 位虚拟用户参团 */
+  function gbSimulate(id, n) {
+    const st = get();
+    const gb = gbOf(id);
+    if (!gb) return { ok: false, msg: '拼团不存在' };
+    if (gb.status !== 'ing') return { ok: false, msg: '该团已结束' };
+    n = Math.max(1, parseInt(n, 10) || 1);
+    let added = 0;
+    const used = gb.members.map(m => m.name);
+    for (let i = 0; i < n && gb.status === 'ing'; i++) {
+      const u = YF.MOCK_USERS.find(x => used.indexOf(x.name) < 0);
+      if (!u) break;
+      used.push(u.name);
+      gb.members.push({ name: u.name, avatar: u.avatar, self: false, at: Date.now(), orderId: null });
+      added++;
+      if (gb.members.length >= gb.need) {
+        gb.status = 'success';
+        gb.formedAt = Date.now();
+        gbFormOrders(gb);
+      }
+    }
+    save();
+    return { ok: true, gb, added, formed: gb.status === 'success' };
+  }
+
+  /** 关闭拼团（超时未成团 / 商家终止）：全额退款到会员卡余额并生成退款流水 */
+  function gbClose(id, reason) {
+    const st = get();
+    const gb = gbOf(id);
+    if (!gb) return { ok: false, msg: '拼团不存在' };
+    if (gb.status !== 'ing') return { ok: false, msg: '该团已结束，无需处理' };
+    const now = Date.now();
+    gb.status = 'fail';
+    gb.closedAt = now;
+    gb.closeReason = reason || '拼团超时未成团';
+    const refunded = [];
+    gb.members.forEach((m, i) => {
+      if (!m.orderId) return;
+      const o = st.orders.find(x => x.id === m.orderId);
+      if (!o || ['refunded', 'canceled'].indexOf(o.status) >= 0) return;
+      st.user.balance = +(st.user.balance + o.total).toFixed(2);
+      st.transactions.unshift({
+        id: 'T' + now + '_' + i, ts: now, type: 'refund', amount: -o.total,
+        channel: '会员卡', orderNo: o.no, status: 'success',
+        memo: '拼团失败自动退款：' + gb.closeReason
+      });
+      o.status = 'refunded';
+      o.refund = { reason: gb.closeReason + '，系统自动全额退款', status: 'refunded', amount: o.total, at: now };
+      o.timeline.push({ t: now, text: gb.closeReason + '，¥' + o.total.toFixed(2) + ' 已自动退回会员卡余额' });
+      refunded.push(o);
+    });
+    save();
+    return { ok: true, gb, refunded };
+  }
+
+  /** 强制成团（后台演示用）：补足虚拟人数后成团 */
+  function gbForce(id) {
+    const gb = gbOf(id);
+    if (!gb || gb.status !== 'ing') return { ok: false, msg: '该团已结束' };
+    const need = Math.max(0, gb.need - gb.members.length);
+    if (need > 0) gbSimulate(id, need);
+    const g2 = gbOf(id);
+    if (g2 && g2.status === 'ing') {
+      g2.status = 'success';
+      g2.formedAt = Date.now();
+      gbFormOrders(g2);
+      save();
+    }
+    return { ok: true, gb: g2, formed: true };
+  }
+
+  /** 超时检查：到期未成团自动关闭并退款，返回本次被关闭的团 */
+  function gbTick() {
+    const st = get();
+    const now = Date.now();
+    const expired = st.groupBuys.filter(g => g.status === 'ing' && now > g.endAt);
+    const out = [];
+    expired.forEach(g => {
+      const r = gbClose(g.id, '拼团超时未成团');
+      if (r.ok) out.push({ gb: r.gb, orders: r.refunded.length, amount: r.refunded.reduce((s, o) => s + o.total, 0) });
+    });
+    return out;
+  }
+
+  /** 用户参团：生成一笔拼团订单（待付款） */
+  function joinGroupBuy(id) {
+    const st = get();
+    const gb = gbOf(id);
+    if (!gb) return { ok: false, msg: '拼团不存在' };
+    if (gb.status !== 'ing') return { ok: false, msg: '该团已结束（已成团或已退款）' };
+    if (gb.members.some(m => m.self)) return { ok: false, msg: '你已在该团内，请勿重复参团' };
+    const p = st.products.find(x => x.id === gb.pid);
+    if (!p) return { ok: false, msg: '商品不存在' };
+    if (p.stock <= 0) return { ok: false, msg: '该商品已售罄' };
+
+    const id2 = 'O' + st.seq;
+    const no = 'YF' + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, '0') +
+      String(new Date().getDate()).padStart(2, '0') + String(st.seq).slice(-3);
+    st.seq += 1;
+    const now = Date.now();
+    const total = +gb.price.toFixed(2);
+    const order = {
+      id: id2, no, mode: 'group',
+      items: [{ id: p.id, name: p.name, emoji: p.emoji, spec: p.spec, price: gb.price, qty: 1, mode: 'group' }],
+      subtotal: total, levelCut: 0, couponCut: 0, pointsCut: 0, deliveryFee: 0, total,
+      payMethod: '', status: 'unpaid', createdAt: now,
+      timeline: [{ t: now, text: '参团订单创建 · ' + gb.need + ' 人成团价 ¥' + total.toFixed(2) }],
+      address: null,
+      pickup: YF.PICKUP_POINTS.find(x => x.id === st.groupMode.pickupId) || YF.PICKUP_POINTS[0],
+      company: null, invoice: null, refund: null,
+      group: { leaderId: st.groupMode.leaderId, needPeople: gb.need, joinedPeople: gb.members.length, endTime: gb.endAt },
+      groupBuyId: gb.id,
+      remark: ''
+    };
+    p.stock -= 1;
+    p.sales += 1;
+    st.orders.unshift(order);
+    save();
+    return { ok: true, order, gb };
+  }
+
+  function gbStats() {
+    const all = get().groupBuys;
+    return {
+      ing: all.filter(g => g.status === 'ing').length,
+      success: all.filter(g => g.status === 'success').length,
+      fail: all.filter(g => g.status === 'fail').length,
+      joined: all.reduce((s, g) => s + g.members.length, 0),
+      amount: all.filter(g => g.status === 'success').reduce((s, g) => s + g.members.length * g.price, 0)
+    };
   }
 
   /* ---------- 后台：拍照入库单 ---------- */
@@ -660,7 +936,9 @@
       balanceLiability: st.user.balance,
       lowStock, pendingOrders, pendingRefund, stockValue,
       productCount: st.products.length,
-      onCount: st.products.filter(p => p.on).length
+      onCount: st.products.filter(p => p.on).length,
+      gbIng: st.groupBuys.filter(g => g.status === 'ing').length,
+      gbFail: st.groupBuys.filter(g => g.status === 'fail').length
     };
   }
 
@@ -669,6 +947,9 @@
     cart, cartAdd, cartSet, cartRemove, cartCount, calcCart,
     placeOrder, payOrder, cancelOrder, advanceOrder, applyRefund, finishRefund,
     recharge, toggleProduct, updateProduct, adjustStock,
+    getShop, updateShop,
+    gbList, gbOf, gbByProduct, gbCreate, gbJoin, gbSimulate, gbClose, gbForce, gbTick,
+    joinGroupBuy, gbStats,
     addIntake, revertIntake, intakeStats,
     reconcile, reconSummary, stats, payName
   };

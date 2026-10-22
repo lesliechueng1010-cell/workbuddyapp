@@ -1,5 +1,5 @@
 /* =========================================================
- * 云峰鲜果 · 商家管理后台
+ * 云峰水果大卖场 · 商家管理后台
  * ========================================================= */
 (function () {
   const S = YF.store;
@@ -20,6 +20,7 @@
     ]},
     { grp: '业务', items: [
       { k: 'orders', i: '📋', t: '订单管理' },
+      { k: 'gbuy', i: '🔥', t: '拼团管理' },
       { k: 'bulk', i: '🏢', t: '企业采购审核' },
       { k: 'after', i: '🔧', t: '售后处理' }
     ]},
@@ -31,6 +32,9 @@
     { grp: '客户', items: [
       { k: 'members', i: '👥', t: '会员管理' },
       { k: 'recharge', i: '💳', t: '充值与余额' }
+    ]},
+    { grp: '设置', items: [
+      { k: 'shop', i: '🏪', t: '门店设置' }
     ]}
   ];
 
@@ -128,7 +132,9 @@
       [['📷', '拍照入库', '上传入库单照片，自动识别后一键入库', 'intake'],
        ['🍎', '商品管理', '上架下架、调整三档价格', 'products'],
        ['📦', '库存盘点', '查看预警与出入库流水', 'stock'],
-       ['🧮', '执行对账', '订单与资金流水自动勾稽', 'recon']].map(q =>
+       ['🧮', '执行对账', '订单与资金流水自动勾稽', 'recon'],
+       ['🔥', '拼团管理', '发起拼团、查看成团进度', 'gbuy'],
+       ['🏪', '门店设置', '门店名称、地址、公告与配送范围', 'shop']].map(q =>
         '<div data-page="' + q[3] + '" style="flex:1;min-width:170px;border:1.5px solid #ECEFF1;border-radius:12px;padding:14px;cursor:pointer;transition:.18s" ' +
         'onmouseover="this.style.borderColor=\'#21A05C\'" onmouseout="this.style.borderColor=\'#ECEFF1\'">' +
         '<div style="font-size:24px">' + q[0] + '</div>' +
@@ -216,11 +222,160 @@
       '<div class="ok" style="margin-top:14px">💡 三种价格分别对应三种业务模式：外卖（零售）、团购（团购价）、企业采购（阶梯批发价）。下架后顾客端不可见。</div>';
   }
 
+  /* ---------- 门店设置（两端共用同一份数据） ---------- */
+  function mfRow(label, id, val) {
+    return '<div class="mf"><label>' + label + '</label><input id="' + id + '" value="' + esc(val) + '"></div>';
+  }
+  function mfArea(label, id, val) {
+    return '<div class="mf"><label>' + label + '</label>' +
+      '<textarea id="' + id + '" style="flex:1;min-height:78px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--card-2);color:var(--ink);outline:none;resize:vertical">' +
+      esc(val) + '</textarea></div>';
+  }
+  function pageShop() {
+    const sp = S.getShop();
+    return '<div class="panel" style="margin-top:0"><div class="panel-head"><h3>门店信息</h3>' +
+      '<span style="font-size:11px;color:#8A8F98">保存后顾客端首页商家信息卡与门店详情立即同步</span></div>' +
+      '<div class="panel-body">' +
+      mfRow('门店名称', 'shName', sp.name) +
+      mfRow('门店地址', 'shAddr', sp.address) +
+      mfRow('联系电话', 'shPhone', sp.phone) +
+      mfRow('营业时间', 'shHours', sp.hours) +
+      mfArea('门店公告', 'shNotice', sp.notice) +
+      mfArea('配送范围说明', 'shDelivery', sp.delivery) +
+      '<div style="display:flex;gap:10px;margin-top:4px">' +
+      '<button class="mini primary" id="shopSave" style="height:36px;padding:0 20px">保存门店设置</button>' +
+      '<button class="mini" id="shopReset" style="height:36px;padding:0 16px">恢复默认</button>' +
+      '</div></div></div>' +
+
+      '<div class="panel"><div class="panel-head"><h3>顾客端展示预览</h3>' +
+      '<span style="font-size:11px;color:#8A8F98">与 App 首页商家信息卡、门店详情页一致</span></div>' +
+      '<div class="panel-body"><div class="card pad">' +
+      '<div class="row" style="padding:0"><span style="font-size:30px">' + sp.logo + '</span>' +
+      '<div class="grow"><div class="rt">' + esc(sp.name) + '</div>' +
+      '<div class="rs">🕘 ' + esc(sp.hours) + ' · ☎️ ' + esc(sp.phone) + '</div>' +
+      '<div class="rs">📍 ' + esc(sp.address) + '</div>' +
+      '<div class="rs" style="margin-top:4px">📢 ' + esc(sp.notice) + '</div></div></div>' +
+      '<div class="ok" style="margin-top:10px">🚚 ' + esc(sp.delivery) + '</div>' +
+      '</div></div></div>';
+  }
+
+  /* ---------- 拼团管理 ---------- */
+  function fmtLeft(ms) {
+    if (!(ms > 0)) return '已结束';
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    const p = n => (n < 10 ? '0' + n : '' + n);
+    return (h > 0 ? h + ':' : '') + p(m) + ':' + p(ss);
+  }
+  function pageGroupBuy() {
+    const gs = S.gbStats();
+    const list = S.gbList().slice().sort((a, b) =>
+      (a.status === 'ing' ? 0 : 1) - (b.status === 'ing' ? 0 : 1) || b.startAt - a.startAt);
+    const gbOrders = st().orders.filter(o => o.groupBuyId);
+    const paidAmt = gbOrders.filter(o => o.status !== 'unpaid' && o.status !== 'canceled' && o.status !== 'refunded')
+      .reduce((s, o) => s + o.total, 0);
+    const refundAmt = gbOrders.filter(o => o.status === 'refunded').reduce((s, o) => s + o.total, 0);
+    const p0 = st().products.filter(p => p.on)[0] || st().products[0];
+
+    return '<div class="kpi-grid">' +
+      kpi('🔥', '进行中拼团', gs.ing + ' 个', '成团后自动进入待自提流程', true) +
+      kpi('🎉', '已成团', gs.success + ' 个', '累计 ' + gs.joined + ' 人次参团', true) +
+      kpi('↩️', '未成团已退款', gs.fail + ' 个', '退款金额 ' + YF.money0(refundAmt), false) +
+      kpi('💰', '拼团销售额', YF.money0(paidAmt), '共 ' + gbOrders.length + ' 笔拼团订单', true) +
+      '</div>' +
+
+      '<div class="panel"><div class="panel-head"><h3>发起拼团</h3>' +
+      '<span style="font-size:11px;color:#8A8F98">选择商品并设定拼团价、成团人数与拼团时限</span></div>' +
+      '<div class="panel-body">' +
+      '<div class="toolbar" style="align-items:flex-end">' +
+      '<div><div style="font-size:11px;color:#8A8F98;margin-bottom:4px">选择商品</div>' +
+      '<select id="gbPid">' + st().products.filter(p => p.on).map(p =>
+        '<option value="' + p.id + '">' + p.emoji + ' ' + esc(p.name) + '（零售 ¥' + p.retail.toFixed(2) + ' / 团购 ¥' + p.group.toFixed(2) + '）</option>').join('') +
+      '</select></div>' +
+      '<div><div style="font-size:11px;color:#8A8F98;margin-bottom:4px">拼团价</div>' +
+      '<input id="gbPrice" type="number" step="0.1" min="0" style="width:110px" value="' + (p0.group * 0.9).toFixed(2) + '"></div>' +
+      '<div><div style="font-size:11px;color:#8A8F98;margin-bottom:4px">成团人数</div>' +
+      '<input id="gbNeed" type="number" min="2" step="1" style="width:96px" value="3"></div>' +
+      '<div><div style="font-size:11px;color:#8A8F98;margin-bottom:4px">时限（小时）</div>' +
+      '<input id="gbHours" type="number" min="1" step="1" style="width:96px" value="12"></div>' +
+      '<button class="mini primary" id="gbCreate" style="height:32px">+ 发起拼团</button>' +
+      '</div>' +
+      '<div class="ok" style="margin-top:12px">💡 拼团价建议低于团购价 10%。到期未成团，系统会自动把团员已付金额全额退回会员卡余额并生成退款流水。</div>' +
+      '</div></div>' +
+
+      '<div class="panel"><div class="panel-head"><h3>拼团活动（' + list.length + '）</h3>' +
+      '<span style="font-size:11px;color:#8A8F98">演示环境可模拟人参团，观察成团与自动退款全过程</span></div>' +
+      '<div class="panel-body" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr>' +
+      '<th>团号</th><th>商品</th><th class="num">拼团价</th><th class="num">零售价</th><th class="num">成团人数</th>' +
+      '<th>进度</th><th>剩余时间</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
+      list.map(g => {
+        const pct = Math.min(100, g.members.length / g.need * 100).toFixed(0);
+        return '<tr><td style="font-size:12px">' + esc(g.id) + '</td>' +
+          '<td><span style="font-size:16px">' + g.emoji + '</span> ' + esc(g.name) +
+          '<div style="font-size:10px;color:#8A8F98">' + esc(g.spec) + '</div></td>' +
+          '<td class="num" style="font-weight:700;color:#F87171">¥' + g.price.toFixed(2) + '</td>' +
+          '<td class="num" style="color:#8A8F98">¥' + g.retail.toFixed(2) + '</td>' +
+          '<td class="num">' + g.need + ' 人</td>' +
+          '<td><div style="width:112px"><div style="font-size:11px">' + g.members.length + '/' + g.need + ' 人</div>' +
+          '<div class="gp-bar"><i style="width:' + pct + '%"></i></div></div></td>' +
+          '<td style="font-size:12px">' + (g.status === 'ing'
+            ? '<span class="countdown" data-cd="1" data-end="' + g.endAt + '">' + fmtLeft(g.endAt - Date.now()) + '</span>'
+            : '—') + '</td>' +
+          '<td>' + (g.status === 'ing' ? '<span class="chip orange">进行中</span>' :
+            g.status === 'success' ? '<span class="chip">已成团</span>' : '<span class="chip red">未成团·已退款</span>') + '</td>' +
+          '<td><div class="tbl-act">' +
+          (g.status === 'ing' ? '<button class="mini" data-gb="sim" data-id="' + g.id + '">模拟人参团</button>' +
+            '<button class="mini primary" data-gb="force" data-id="' + g.id + '">强制成团</button>' +
+            '<button class="mini danger" data-gb="close" data-id="' + g.id + '">终止并退款</button>' : '') +
+          '<button class="mini" data-gb="detail" data-id="' + g.id + '">团员明细</button>' +
+          '</div></td></tr>';
+      }).join('') + '</tbody></table></div></div>' +
+
+      '<div class="panel"><div class="panel-head"><h3>拼团订单（' + gbOrders.length + ' 笔）</h3>' +
+      '<span style="font-size:11px;color:#8A8F98">与普通订单共用订单表，带「🔥 拼团单」标识</span></div>' +
+      '<div class="panel-body" style="padding:0;overflow-x:auto">' +
+      (gbOrders.length ? '<table class="tbl"><thead><tr><th>订单号</th><th>团号</th><th>商品</th><th class="num">金额</th>' +
+        '<th>支付</th><th>状态</th><th>下单时间</th><th>操作</th></tr></thead><tbody>' +
+        gbOrders.map(o =>
+          '<tr><td style="font-size:12px">' + esc(o.no) + '</td>' +
+          '<td><span class="chip purple">' + esc(o.groupBuyId) + '</span></td>' +
+          '<td><span style="font-size:15px">' + o.items[0].emoji + '</span> ' + esc(o.items[0].name) + '</td>' +
+          '<td class="num" style="font-weight:700">' + YF.money(o.total) + '</td>' +
+          '<td style="font-size:12px;color:#8A8F98">' + (o.payMethod ? S.payName(o.payMethod).replace('（账期）', '') : '—') + '</td>' +
+          '<td>' + statusChip(o.status) + '</td>' +
+          '<td style="font-size:12px;color:#8A8F98">' + YF.fmtTime(o.createdAt) + '</td>' +
+          '<td><button class="mini" data-odetail="' + o.id + '">详情</button></td></tr>').join('') +
+        '</tbody></table>' : '<div class="empty"><div class="ee">🔥</div><p>还没有拼团订单</p></div>') +
+      '</div></div>';
+  }
+  function gbDetail(id) {
+    const g = S.gbOf(id);
+    if (!g) return;
+    modal('拼团 ' + g.id + ' · 团员明细',
+      '<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">' +
+      '<span style="font-size:34px">' + g.emoji + '</span>' +
+      '<div><div style="font-weight:700">' + esc(g.name) + '</div>' +
+      '<div style="font-size:12px;color:#8A8F98">拼团价 ¥' + g.price.toFixed(2) + ' · ' + g.need + ' 人成团 · ' +
+      (g.status === 'ing' ? '剩 ' + fmtLeft(g.endAt - Date.now()) : g.status === 'success' ? '已成团' : '未成团已退款') + '</div></div></div>' +
+      '<table class="tbl" style="font-size:12px"><thead><tr><th>团员</th><th>身份</th><th>参团时间</th><th>关联订单</th></tr></thead><tbody>' +
+      g.members.map(m => '<tr><td>' + m.avatar + ' ' + esc(m.name) + '</td>' +
+        '<td>' + (m.self ? '<span class="chip">本人</span>' : '<span class="chip gray">虚拟用户</span>') + '</td>' +
+        '<td style="color:#8A8F98">' + YF.fmtTime(m.at) + '</td>' +
+        '<td style="font-size:12px">' + (m.orderId ? (function () {
+          const o = ord(m.orderId);
+          return o ? esc(o.no) + ' · ' + YF.money(o.total) : m.orderId;
+        })() : '—') + '</td></tr>').join('') +
+      '</tbody></table>' +
+      '<div style="margin-top:12px;font-size:12px;color:#8A8F98">进度 ' + g.members.length + '/' + g.need + ' 人' +
+      (g.status === 'fail' ? ' · ' + esc(g.closeReason || '未成团') : '') + '</div>', null, null);
+  }
+
   /* ---------- 订单管理 ---------- */
-  const ORD_TABS = { all: '全部', unpaid: '待付款', accepted: '待接单', delivering: '配送中', done: '已完成' };
+  const ORD_TABS = { all: '全部', gb: '🔥 拼团', unpaid: '待付款', accepted: '待接单', delivering: '配送中', done: '已完成' };
   function pageOrders() {
     let list = st().orders.slice();
-    if (UI.ordStatus !== 'all') list = list.filter(o => o.status === UI.ordStatus);
+    if (UI.ordStatus === 'gb') list = list.filter(o => !!o.groupBuyId);
+    else if (UI.ordStatus !== 'all') list = list.filter(o => o.status === UI.ordStatus);
     list.sort((a, b) => b.createdAt - a.createdAt);
     return '<div class="panel" style="margin-top:0"><div class="panel-head"><h3>订单管理（' + list.length + ' 笔）</h3>' +
       '<div class="toolbar">' + Object.keys(ORD_TABS).map(k =>
@@ -230,7 +385,8 @@
       list.map(o => {
         const m = YF.MODES[o.mode];
         return '<tr><td style="font-size:12px">' + o.no + '</td>' +
-          '<td><span class="chip ' + (o.mode === 'bulk' ? 'blue' : o.mode === 'group' ? '' : 'orange') + '">' + m.icon + ' ' + m.short + '</span></td>' +
+          '<td><span class="chip ' + (o.mode === 'bulk' ? 'blue' : o.mode === 'group' ? '' : 'orange') + '">' + m.icon + ' ' + m.short + '</span>' +
+          (o.groupBuyId ? ' <span class="chip purple">🔥 拼团</span>' : '') + '</td>' +
           '<td>' + (o.company ? esc(o.company.name.slice(0, 10)) + '…' : esc(st().user.name)) + '</td>' +
           '<td style="max-width:220px"><span style="font-size:15px">' + o.items[0].emoji + '</span> ' + esc(o.items[0].name) +
           (o.items.length > 1 ? ' 等 ' + o.items.length + ' 件' : '') + '</td>' +
@@ -244,7 +400,10 @@
           (o.status === 'unpaid' ? '<button class="mini" data-markpay="' + o.id + '">标记已付</button>' : '') +
           (o.status === 'accepted' ? '<button class="mini primary" data-next="' + o.id + '">接单发货</button>' : '') +
           (o.status === 'delivering' ? '<button class="mini primary" data-next="' + o.id + '">标记送达</button>' : '') +
-          (o.status === 'grouping' ? '<button class="mini primary" data-next="' + o.id + '">标记成团</button>' : '') +
+          (o.status === 'grouping' ? (o.groupBuyId
+            ? '<button class="mini" data-gb="sim" data-id="' + o.groupBuyId + '">模拟人参团</button>' +
+              '<button class="mini primary" data-gb="force" data-id="' + o.groupBuyId + '">强制成团</button>'
+            : '<button class="mini primary" data-next="' + o.id + '">标记成团</button>') : '') +
           (o.status === 'refunding' ? '<button class="mini primary" data-ref="ok" data-id="' + o.id + '">同意退款</button>' +
             '<button class="mini danger" data-ref="no" data-id="' + o.id + '">驳回</button>' : '') +
           '<button class="mini" data-odetail="' + o.id + '">详情</button>' +
@@ -794,6 +953,8 @@
   /* ---------- 渲染 ---------- */
   const TITLES = {
     dash: ['经营概览', '门店实时经营数据总览'],
+    shop: ['门店设置', '门店名称 · 地址 · 电话 · 营业时间 · 公告 · 配送范围'],
+    gbuy: ['拼团管理', '发起拼团 · 成团进度 · 超时自动退款'],
     intake: ['智能入库', '拍照识别入库单 · 一键写入库存'],
     sales: ['销售盘点', '销售趋势 · 分类构成 · 热销榜'],
     recon: ['自动对账', '订单金额与资金流水自动勾稽'],
@@ -806,7 +967,7 @@
     recharge: ['充值与余额', '会员卡充值 · 核销 · 预收负债']
   };
   function render() {
-    sideEl.innerHTML = '<div class="brand">🍊<span>云峰鲜果<small>商家管理后台</small></span></div>' +
+    sideEl.innerHTML = '<div class="brand">🍊<span>云峰水果大卖场<small>商家管理后台</small></span></div>' +
       NAV.map(g => '<div class="grp">' + g.grp + '</div>' +
         g.items.map(it => '<button data-page="' + it.k + '" class="' + (UI.page === it.k ? 'on' : '') + '">' +
           '<span>' + it.i + '</span><span>' + it.t + '</span></button>').join('')).join('');
@@ -814,7 +975,8 @@
     const html = ({
       dash: pageDash, sales: pageSales, recon: pageRecon, orders: pageOrders,
       bulk: pageBulk, after: pageAfter, intake: pageIntake, products: pageProducts,
-      stock: pageStock, members: pageMembers, recharge: pageRecharge
+      stock: pageStock, members: pageMembers, recharge: pageRecharge,
+      shop: pageShop, gbuy: pageGroupBuy
     })[UI.page]();
     mainEl.innerHTML = html;
     titleEl.textContent = TITLES[UI.page][0];
@@ -835,7 +997,71 @@
     const ap = document.getElementById('addProd');
     if (ap) ap.onclick = () => toast('演示版暂未开放新增商品');
 
-    mainEl.querySelectorAll('[data-page]').forEach(el => el.onclick = () => { UI.page = el.getAttribute('data-page'); render(); });
+    /* 门店设置 */
+    const ss = document.getElementById('shopSave');
+    if (ss) ss.onclick = () => {
+      const name = (document.getElementById('shName').value || '').trim();
+      const phone = (document.getElementById('shPhone').value || '').trim();
+      if (!name) { toast('门店名称不能为空'); return; }
+      S.updateShop({
+        name, phone,
+        address: (document.getElementById('shAddr').value || '').trim(),
+        hours: (document.getElementById('shHours').value || '').trim(),
+        notice: document.getElementById('shNotice').value,
+        delivery: document.getElementById('shDelivery').value
+      });
+      toast('门店设置已保存，顾客端已同步');
+      render();
+    };
+    const sr2 = document.getElementById('shopReset');
+    if (sr2) sr2.onclick = () => {
+      S.updateShop(JSON.parse(JSON.stringify(YF.SHOP_INFO)));
+      toast('已恢复默认门店信息');
+      render();
+    };
+
+    /* 拼团管理 */
+    const gc = document.getElementById('gbCreate');
+    if (gc) gc.onclick = () => {
+      const r = S.gbCreate({
+        pid: document.getElementById('gbPid').value,
+        price: parseFloat(document.getElementById('gbPrice').value),
+        need: parseInt(document.getElementById('gbNeed').value, 10),
+        hours: parseFloat(document.getElementById('gbHours').value)
+      });
+      toast(r.ok ? '拼团已发起：' + r.gb.id + '（' + r.gb.need + ' 人团 · ¥' + r.gb.price.toFixed(2) + '）' : r.msg);
+      render();
+    };
+    mainEl.querySelectorAll('[data-gb]').forEach(el => el.onclick = () => {
+      const a = el.getAttribute('data-gb');
+      const gid = el.getAttribute('data-id');
+      if (a === 'sim') {
+        const r = S.gbSimulate(gid, 1);
+        toast(r.ok ? (r.formed ? '拼团成功！订单已进入待自提' : '已模拟 1 人参团：' + r.gb.members.length + '/' + r.gb.need + ' 人') : r.msg);
+        render();
+      } else if (a === 'force') {
+        const r = S.gbForce(gid);
+        toast(r.ok ? '已强制成团' : r.msg);
+        render();
+      } else if (a === 'close') {
+        const g = S.gbOf(gid);
+        modal('终止拼团 ' + g.id,
+          '<div style="font-size:13px;line-height:1.8">确认终止「' + esc(g.name) + '」的拼团吗？<br>' +
+          '已付款的团员订单将全额退款到会员卡余额，并生成退款流水。</div>', '确认终止', () => {
+            modalEl.innerHTML = '';
+            const r = S.gbClose(gid, '商家主动终止拼团');
+            toast(r.ok ? '已终止，' + r.refunded.length + ' 笔订单已退款到会员卡' : r.msg);
+            render();
+          });
+      } else if (a === 'detail') {
+        gbDetail(gid);
+      }
+    });
+
+    // 侧边栏菜单 + 页面内的快捷入口都要能跳页
+    [sideEl, mainEl].forEach(root => {
+      root.querySelectorAll('[data-page]').forEach(el => el.onclick = () => { UI.page = el.getAttribute('data-page'); render(); });
+    });
     mainEl.querySelectorAll('[data-ordtab]').forEach(el => el.onclick = () => { UI.ordStatus = el.getAttribute('data-ordtab'); render(); });
     mainEl.querySelectorAll('[data-toggle]').forEach(el => el.onclick = () => {
       const id = el.getAttribute('data-toggle');
@@ -1012,5 +1238,27 @@
   document.getElementById('backApp').onclick = () => { location.href = 'index.html'; };
 
   S.load();
+  const closed0 = S.gbTick();
   render();
+  if (closed0.length) {
+    setTimeout(() => toast(closed0.length + ' 个拼团超时未成团，已自动退款到会员卡余额'), 400);
+  }
+
+  /* 拼团倒计时刷新 + 超时自动退款扫描 */
+  let cdN = 0;
+  setInterval(() => {
+    document.querySelectorAll('[data-cd]').forEach(el => {
+      const end = +el.getAttribute('data-end');
+      if (isFinite(end)) el.textContent = fmtLeft(end - Date.now());
+    });
+    cdN++;
+    if (cdN % 10 === 0) {
+      const c = S.gbTick();
+      if (c.length) {
+        const amt = c.reduce((s, x) => s + x.amount, 0);
+        toast(c.length + ' 个拼团超时未成团，已自动退款 ' + YF.money(amt) + ' 到会员卡');
+        render();
+      }
+    }
+  }, 1000);
 })();
